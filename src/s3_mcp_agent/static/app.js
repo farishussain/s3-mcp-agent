@@ -3,6 +3,9 @@
 const byId = (id) => document.getElementById(id);
 let nextToken = null;
 let busy = false;
+let storageScope = null;
+let listingToken = null;
+let scan = null;
 const labels = {
   collected: "Collected", not_configured: "Not configured", access_denied: "Access denied",
   unsupported: "Unsupported", error: "Error",
@@ -29,7 +32,7 @@ async function request(path) {
 async function run(action) {
   if (busy) return;
   busy = true;
-  for (const id of ["buckets", "more", "inspect", "bucket"]) byId(id).disabled = true;
+  for (const element of document.querySelectorAll("button, input")) element.disabled = true;
   byId("status").textContent = "Loading from AWS…";
   try {
     await action();
@@ -37,13 +40,13 @@ async function run(action) {
     byId("status").textContent = error.message || "Unable to load data.";
   } finally {
     busy = false;
-    for (const id of ["buckets", "more", "inspect", "bucket"]) byId(id).disabled = false;
+    for (const element of document.querySelectorAll("button, input")) element.disabled = false;
   }
 }
 
 async function loadBuckets(token) {
   const data = await request("/api/buckets" + (token ? "?token=" + encodeURIComponent(token) : ""));
-  if (!token) byId("bucket-options").replaceChildren();
+  byId("bucket-options").replaceChildren();
   for (const bucket of data.buckets) {
     const option = document.createElement("option");
     option.value = bucket.name;
@@ -116,3 +119,135 @@ byId("inspect").addEventListener("click", () => run(async () => {
   render(report);
   byId("status").textContent = "Snapshot loaded. Refresh explicitly to check for changes.";
 }));
+
+function resetScan() {
+  scan = null;
+  byId("scan-next").hidden = true;
+  byId("scan-status").textContent = "Totals unknown. Start a scan to measure this prefix.";
+  byId("type-totals").replaceChildren();
+}
+
+function storageURL(route, token) {
+  const query = new URLSearchParams({bucket: storageScope.bucket, prefix: storageScope.prefix});
+  if (token) query.set("token", token);
+  return route + "?" + query;
+}
+
+function prefixButton(label, bucket, prefix) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", () => run(() => openPrefix(bucket, prefix)));
+  return button;
+}
+
+async function openPrefix(bucket, prefix) {
+  byId("storage").hidden = true;
+  resetScan();
+  storageScope = {bucket, prefix};
+  listingToken = null;
+  await loadStoragePage(null);
+}
+
+async function loadStoragePage(token) {
+  const page = await request(storageURL("/api/storage", token));
+  byId("storage-title").textContent = `Storage: ${storageScope.bucket} / ${storageScope.prefix || "(root)"}`;
+  byId("breadcrumbs").replaceChildren(prefixButton("Bucket root", storageScope.bucket, ""));
+  let prefix = "";
+  const parts = storageScope.prefix.split("/");
+  parts.pop();
+  for (const part of parts) {
+    prefix += part + "/";
+    byId("breadcrumbs").append(prefixButton(part || "(empty segment)", storageScope.bucket, prefix));
+  }
+  byId("folders").replaceChildren();
+  for (const child of page.prefixes) {
+    byId("folders").append(prefixButton(`Prefix: ${child}`, storageScope.bucket, child));
+  }
+  byId("objects").replaceChildren();
+  for (const item of page.objects) {
+    const row = document.createElement("tr");
+    for (const value of [item.key, item.size.toLocaleString(), item.inferred_type]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    byId("objects").append(row);
+  }
+  listingToken = page.next_continuation_token;
+  byId("objects-next").hidden = !listingToken;
+  byId("listing-status").textContent =
+    `Immediate page only: ${page.page_totals.objects} objects, ${page.page_totals.bytes.toLocaleString()} bytes, ` +
+    `${page.prefixes.length} child prefixes. ${page.is_truncated ? "More listing pages remain." : "End of immediate listing."} ` +
+    `These are not recursive totals. Listed at ${page.listed_at}.`;
+  byId("storage").hidden = false;
+  byId("status").textContent = "Storage page loaded. Choose a prefix or start a recursive metadata scan.";
+}
+
+function mergeScanPage(state, page) {
+  state.objects += BigInt(page.page_totals.objects);
+  state.bytes += BigInt(page.page_totals.bytes);
+  state.markers += BigInt(page.page_totals.folder_markers);
+  for (const [type, totals] of Object.entries(page.page_totals.types)) {
+    // Keep browser aggregation bounded even for adversarial extension cardinality.
+    const group = state.types.has(type) || state.types.size < 64 ? type : "other extensions (grouped)";
+    const current = state.types.get(group) || {objects: 0n, bytes: 0n};
+    current.objects += BigInt(totals.objects);
+    current.bytes += BigInt(totals.bytes);
+    state.types.set(group, current);
+  }
+  state.pages += 1;
+  state.token = page.next_continuation_token;
+}
+
+async function scanPage(restart) {
+  if (restart) {
+    resetScan();
+    scan = {objects: 0n, bytes: 0n, markers: 0n, pages: 0, token: null, types: new Map()};
+  }
+  byId("scan-status").textContent = "Scanning one metadata page… Totals are not yet complete.";
+  let page;
+  try {
+    page = await request(storageURL("/api/storage-scan", scan.token));
+  } catch (error) {
+    byId("scan-status").textContent = scan.pages
+      ? `Scan failed. PARTIAL ONLY: ${scan.objects} objects, ${scan.bytes} bytes from ${scan.pages} successful pages. Retry the next page or restart.`
+      : "Scan failed. Totals unknown, not zero. Retry or check AWS access.";
+    byId("scan-next").hidden = !scan.pages;
+    throw error;
+  }
+  if (page.is_truncated && (!page.next_continuation_token || page.next_continuation_token === scan.token)) {
+    byId("scan-status").textContent = "Scan incomplete: pagination did not advance. Restart the scan; do not treat totals as complete.";
+    byId("scan-next").hidden = true;
+    throw new Error("S3 pagination did not advance.");
+  }
+  mergeScanPage(scan, page);
+  byId("scan-next").hidden = !page.is_truncated;
+  byId("scan-status").textContent =
+    `${page.is_truncated ? "PARTIAL — more pages remain" : "COMPLETE traversal of current prefix"}: ` +
+    `${scan.objects.toLocaleString()} objects, ${scan.bytes.toLocaleString()} bytes; ${scan.markers} folder markers included. ` +
+    `${scan.pages} pages scanned recursively under ${storageScope.prefix || "(bucket root)"}. ` +
+    `Latest page: ${page.listed_at}. Not an atomic snapshot or billed storage.`;
+  byId("type-totals").replaceChildren();
+  for (const [type, totals] of scan.types) {
+    byId("type-totals").append(card(`Inferred: ${type}`, `${totals.objects.toLocaleString()} objects · ${totals.bytes.toLocaleString()} bytes`));
+  }
+  byId("status").textContent = page.is_truncated
+    ? "One metadata page scanned. Continue explicitly to include more objects."
+    : "Metadata traversal complete for this prefix. See scope and snapshot limitations below.";
+}
+
+byId("browse").addEventListener("click", () => run(async () => {
+  const bucket = byId("bucket").value.trim();
+  if (!bucket) throw new Error("Enter or choose a bucket name first.");
+  await openPrefix(bucket, "");
+}));
+byId("objects-next").addEventListener("click", () => run(() => loadStoragePage(listingToken)));
+byId("scan-start").addEventListener("click", () => run(() => scanPage(true)));
+byId("scan-next").addEventListener("click", () => run(() => scanPage(false)));
+byId("bucket").addEventListener("input", () => {
+  byId("storage").hidden = true;
+  byId("report").hidden = true;
+  storageScope = null;
+  resetScan();
+});

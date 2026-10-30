@@ -73,7 +73,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             body = files("s3_mcp_agent").joinpath("static", name).read_bytes()
             self._respond(200, body, content_type)
             return
-        if url.path not in {"/api/buckets", "/api/permissions"}:
+        if url.path not in {"/api/buckets", "/api/permissions", "/api/storage", "/api/storage-scan"}:
             self._json(404, {"error": "Not found."})
             return
         # A non-simple header forces foreign origins through a CORS preflight,
@@ -96,7 +96,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if not bucket:
                     self._json(400, {"error": "A bucket name is required."})
                     return
-                result = self.service.permission_report(bucket)
+                if url.path == "/api/permissions":
+                    result = self.service.permission_report(bucket)
+                else:
+                    result = self.service.storage_page(
+                        bucket,
+                        prefix=query.get("prefix", [""])[0],
+                        continuation_token=query.get("token", [None])[0],
+                        recursive=url.path == "/api/storage-scan",
+                    )
             self._json(200, result)
         except S3MCPError:
             self._json(400, {"error": "Request failed. Check the bucket allowlist and AWS permissions."})

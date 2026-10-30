@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>S3 permissions | Local dashboard</title>
+  <title>S3 visibility | Local dashboard</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header><span class="brand">S3 / LOCAL</span><span class="pill">Read-only permissions</span></header>
+  <header><span class="brand">S3 / LOCAL</span><span class="pill">Read-only visibility</span></header>
   <main>
     <h1>Know what your bucket allows.</h1>
     <p class="intro">Inspect permission evidence using your own AWS identity. Nothing is changed.</p>
@@ -23,9 +23,30 @@
       <input id="bucket" list="bucket-options" autocomplete="off" placeholder="Choose or enter a bucket">
       <datalist id="bucket-options"></datalist>
       <button id="inspect" type="button">Load / refresh permissions</button>
+      <button id="browse" type="button">Browse storage</button>
       <p class="hint">No automatic AWS requests. You can enter a bucket directly without ListAllMyBuckets permission.</p>
     </section>
     <p id="status" role="status" aria-live="polite">Choose a bucket and load its permissions to begin.</p>
+    <section id="storage" hidden aria-label="Storage metadata">
+      <h2 id="storage-title">Storage</h2>
+      <aside class="notice">Current listed objects only, not billed storage. Noncurrent versions and incomplete uploads are excluded.
+        Types are inferred from key extensions, not contents. S3 prefixes are not actual directories.
+        Listings can change during scans; results are not an atomic snapshot.</aside>
+      <nav id="breadcrumbs" aria-label="Prefix breadcrumbs"></nav>
+      <p id="listing-status"></p>
+      <div id="folders" class="grid"></div>
+      <div class="table-scroll"><table><caption>Immediate-prefix objects on this page (not recursive)</caption>
+        <thead><tr><th scope="col">Object key</th><th scope="col">Size (bytes)</th><th scope="col">Inferred type</th></tr></thead>
+        <tbody id="objects"></tbody></table></div>
+      <button id="objects-next" type="button" hidden>Next listing page</button>
+      <h3>Recursive prefix totals</h3>
+      <p>Each click scans at most 500 current objects. Nothing scans automatically. Navigation resets the scan.
+        Folder-marker objects count as objects and are shown separately. No object contents are read.</p>
+      <button id="scan-start" type="button">Start / restart prefix scan</button>
+      <button id="scan-next" type="button" hidden>Scan next 500 objects</button>
+      <p id="scan-status" role="status" aria-live="polite">Totals unknown. Start a scan to measure this prefix.</p>
+      <div id="type-totals" class="grid"></div>
+    </section>
     <div id="report" hidden>
       <div class="report-heading"><h2 id="report-title"></h2><p id="timestamp"></p></div>
       <aside id="coverage" class="notice"></aside>
