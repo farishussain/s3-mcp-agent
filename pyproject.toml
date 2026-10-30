@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "s3-mcp-agent"
+version = "0.1.0"
+description = "An MCP server for inspecting Amazon S3 and safely transferring objects."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Farish Hussain" }]
+dependencies = [
+    "boto3>=1.35.0",
+    "mcp>=1.2.0,<2.0.0",
+]
+
+[project.scripts]
+s3-mcp-agent = "s3_mcp_agent.server:main"
+s3-mcp-dashboard = "s3_mcp_agent.dashboard:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/s3_mcp_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

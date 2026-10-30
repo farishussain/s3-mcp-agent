@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S3 permissions | Local dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header><span class="brand">S3 / LOCAL</span><span class="pill">Read-only permissions</span></header>
+  <main>
+    <h1>Know what your bucket allows.</h1>
+    <p class="intro">Inspect permission evidence using your own AWS identity. Nothing is changed.</p>
+    <aside class="notice"><strong>Observed configuration, not effective access.</strong>
+      IAM policies, account-level public-access blocks, SCPs, access points, VPC endpoints and KMS
+      can affect access and are not evaluated. Missing evidence never means safe.
+    </aside>
+    <section class="controls" aria-label="Bucket selection">
+      <button id="buckets" type="button">Load buckets</button>
+      <button id="more" type="button" hidden>Next page</button>
+      <label for="bucket">Bucket name</label>
+      <input id="bucket" list="bucket-options" autocomplete="off" placeholder="Choose or enter a bucket">
+      <datalist id="bucket-options"></datalist>
+      <button id="inspect" type="button">Load / refresh permissions</button>
+      <p class="hint">No automatic AWS requests. You can enter a bucket directly without ListAllMyBuckets permission.</p>
+    </section>
+    <p id="status" role="status" aria-live="polite">Choose a bucket and load its permissions to begin.</p>
+    <div id="report" hidden>
+      <div class="report-heading"><h2 id="report-title"></h2><p id="timestamp"></p></div>
+      <aside id="coverage" class="notice"></aside>
+      <section><h2>Evidence sources</h2><div id="sources" class="grid"></div></section>
+      <section><h2>Public-access indicators</h2><p>These observations are not a public/private verdict. ACL grants may be disabled or ignored.</p><div id="indicators" class="grid"></div></section>
+      <section><h2>Bucket policy</h2><p id="policy-status"></p><div id="statements"></div><details><summary>Observed policy document</summary><pre id="policy-document"></pre></details></section>
+      <section><h2>ACL grants</h2><p id="acl-status"></p><div id="grants" class="grid"></div></section>
+      <section><h2>Controls not evaluated</h2><ul id="limitations"></ul></section>
+    </div>
+    <footer>Local-only · AWS credentials stay on the server · No uploads, downloads or permission changes</footer>
+  </main>
+</body>
+</html>
