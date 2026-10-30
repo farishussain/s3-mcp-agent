@@ -82,9 +82,38 @@ class DashboardTests(unittest.TestCase):
         self.client.get_object.assert_not_called()
 
     def test_blocked_bucket_does_not_reach_aws(self) -> None:
-        status, _, _ = self.request("/api/permissions?bucket=blocked")
-        self.assertEqual(status, 400)
+        for route in ("permissions", "storage", "storage-scan"):
+            status, _, _ = self.request(f"/api/{route}?bucket=blocked")
+            self.assertEqual(status, 400)
         self.assertEqual(self.client.mock_calls, [])
+
+    def test_storage_routes_preserve_prefix_token_and_recursive_scope(self):
+        self.client.list_objects_v2.return_value = {
+            "Contents": [{"Key": "a/b.csv", "Size": 25}],
+            "CommonPrefixes": [{"Prefix": "a/nested/"}],
+            "IsTruncated": True, "NextContinuationToken": "next",
+        }
+        status, _, body = self.request("/api/storage?bucket=allowed&prefix=a%2F&token=previous")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["page_totals"]["bytes"], 25)
+        self.assertEqual(json.loads(body)["prefixes"], ["a/nested/"])
+        self.assertEqual(self.client.list_objects_v2.call_args.kwargs["Delimiter"], "/")
+        status, _, body = self.request("/api/storage-scan?bucket=allowed&prefix=a%2F&token=previous")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["scope"], "recursive_prefix_page")
+        self.assertEqual(self.client.list_objects_v2.call_args.kwargs["ContinuationToken"], "previous")
+        self.assertNotIn("Delimiter", self.client.list_objects_v2.call_args.kwargs)
+        self.client.get_object.assert_not_called()
+
+    def test_storage_denied_is_an_error_not_an_empty_report(self):
+        self.client.list_objects_v2.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "ListObjectsV2"
+        )
+        for route in ("storage", "storage-scan"):
+            status, _, body = self.request(f"/api/{route}?bucket=allowed")
+            self.assertEqual(status, 400)
+            self.assertIn("error", json.loads(body))
+            self.assertNotIn("page_totals", json.loads(body))
 
     def test_cross_origin_and_rebound_host_requests_are_rejected(self) -> None:
         for headers in (
@@ -94,9 +123,10 @@ class DashboardTests(unittest.TestCase):
             {"X-S3-Dashboard": "1", "Sec-Fetch-Site": "cross-site"},
             {"Accept": "application/json"},
         ):
-            status, response_headers, _ = self.request("/api/buckets", headers)
-            self.assertEqual(status, 403)
-            self.assertNotIn("Access-Control-Allow-Origin", response_headers)
+            for route in ("buckets", "storage", "storage-scan"):
+                status, response_headers, _ = self.request(f"/api/{route}", headers)
+                self.assertEqual(status, 403)
+                self.assertNotIn("Access-Control-Allow-Origin", response_headers)
         self.assertEqual(self.client.mock_calls, [])
 
     def test_same_origin_is_accepted(self) -> None:

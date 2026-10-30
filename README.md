@@ -76,6 +76,37 @@ Click **Load buckets**, or enter a bucket name directly if you do not have `s3:L
 Then click **Load / refresh permissions**. No AWS data requests are made on page load or on a timer.
 The existing `S3_MCP_ALLOWED_BUCKETS` restriction and AWS permissions apply unchanged.
 
+### Storage sizes, types and prefix drill-down
+
+Click **Browse storage** to list up to 500 immediate objects/child prefixes per page.
+Click a prefix or breadcrumb to drill down; S3 prefixes are key-name groupings, not real directories.
+**Next listing page** replaces the visible page rather than retaining unbounded object lists.
+Immediate-page counts and bytes exclude descendants hidden under child prefixes and are never
+presented as recursive or full-bucket totals. Empty pages may still have child prefixes.
+
+Use **Start / restart prefix scan** for recursive current-prefix counts, bytes and inferred file-type
+breakdowns. Each explicit **Scan next 500 objects** click reads at most one more metadata page.
+Progress remains **PARTIAL** until S3 reports the end of the listing. Scanning the bucket root to
+completion gives totals for current listed objects in that bucket; scanning a child prefix gives
+only that prefix's totals. Errors retain partial progress or show unknown, not zero. Navigation
+resets scan state. State exists only in the current browser page, never shared across users.
+The browser retains only aggregate counters (exact integer totals), at most 64 distinct inferred
+type groups plus an overflow group, and one listing page; the server stores no scan sessions.
+The bucket picker similarly retains only its latest page.
+
+Types are inferred from the final key extension (case-insensitive), not MIME types or content;
+for example `.tar.gz` groups as `.gz`. Extensionless, dot-only names, invalid or unusually long
+extensions are grouped as `extensionless/unknown`. Zero-byte keys ending in `/` are labeled
+`folder-marker`: they count as objects and their bytes remain included. Nonempty slash-ending
+objects are not treated as folder markers.
+
+These are **not billed-storage totals**: noncurrent versions and incomplete multipart uploads
+are excluded. A traversal is not an atomic snapshot; concurrent object changes can affect totals.
+No object contents, previews or transfers are accessed. S3 LIST request charges can apply.
+Storage browsing/scanning needs only `s3:ListBucket` on the allowed bucket (and any matching
+`s3:prefix` conditions). It needs no `s3:GetObject`. The IAM example below already includes
+`s3:ListBucket`; remove transfer permissions for dashboard-only users.
+
 The dashboard reuses `permission_report`: source statuses, snapshot timestamp, policy statements
 and conditions, ACL grants and applicability, ownership controls and bucket-level public-access
 indicators. Unknown and incomplete evidence is explicit; it does not calculate effective access.
@@ -171,6 +202,8 @@ The upload tool itself sends the S3 `If-None-Match: *` conditional header to pre
 ```shell
 python -m pip install -e .
 python -m unittest discover -s tests
+# Optional Node.js built-in runner for browser aggregation/state tests:
+node --test tests/test_storage_ui.cjs
 ```
 
 Tests use mocked S3 clients and do not require AWS credentials or make AWS requests. To start the server locally:

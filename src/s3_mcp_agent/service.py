@@ -65,11 +65,15 @@ class S3Service:
         prefix: str = "",
         continuation_token: str | None = None,
         limit: int = 100,
+        *,
+        delimiter: str | None = None,
     ) -> dict[str, Any]:
         self._check_bucket(bucket)
         if not 1 <= limit <= 1000:
             raise S3MCPError("limit must be between 1 and 1000.")
         request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": limit}
+        if delimiter is not None:
+            request["Delimiter"] = delimiter
         if continuation_token:
             request["ContinuationToken"] = continuation_token
         try:
@@ -94,6 +98,47 @@ class S3Service:
             ],
             "is_truncated": response.get("IsTruncated", False),
             "next_continuation_token": response.get("NextContinuationToken"),
+            "prefixes": [item["Prefix"] for item in response.get("CommonPrefixes", [])],
+        }
+
+    def storage_page(
+        self,
+        bucket: str,
+        prefix: str = "",
+        continuation_token: str | None = None,
+        *,
+        recursive: bool = False,
+    ) -> dict[str, Any]:
+        """Read one bounded metadata page, never object bodies or previous versions."""
+        page = self.list_objects(
+            bucket, prefix, continuation_token, 500,
+            delimiter=None if recursive else "/",
+        )
+        if page["is_truncated"] and not page["next_continuation_token"]:
+            raise S3MCPError("S3 returned an incomplete page without a continuation token.")
+        types: dict[str, dict[str, int]] = {}
+        marker_count = 0
+        total_bytes = 0
+        for item in page["objects"]:
+            marker = item["key"].endswith("/") and item["size"] == 0
+            kind = "folder-marker" if marker else _inferred_extension(item["key"])
+            item["inferred_type"] = kind
+            item["folder_marker"] = marker
+            marker_count += int(marker)
+            total_bytes += item["size"]
+            group = types.setdefault(kind, {"objects": 0, "bytes": 0})
+            group["objects"] += 1
+            group["bytes"] += item["size"]
+        return {
+            **page,
+            "scope": "recursive_prefix_page" if recursive else "immediate_prefix_page",
+            "listed_at": datetime.now(timezone.utc).isoformat(),
+            "page_totals": {
+                "objects": len(page["objects"]),
+                "bytes": total_bytes,
+                "folder_markers": marker_count,
+                "types": types,
+            },
         }
 
     def inspect_bucket(self, bucket: str) -> dict[str, Any]:
@@ -491,6 +536,16 @@ _ABSENT_CONFIGURATION_CODES: dict[str, set[str]] = {
 
 _ACCESS_DENIED_CODES = {"AccessDenied", "AccessDeniedException", "AllAccessDisabled", "403"}
 _UNSUPPORTED_CODES = {"NotImplemented", "UnsupportedOperation"}
+
+
+def _inferred_extension(key: str) -> str:
+    name = key.rsplit("/", 1)[-1]
+    if "." not in name or name.startswith(".") and name.count(".") == 1:
+        return "extensionless/unknown"
+    extension = name.rsplit(".", 1)[-1].lower()
+    if not extension or len(extension) > 32 or not extension.isascii() or not extension.isalnum():
+        return "extensionless/unknown"
+    return "." + extension
 
 
 def _is_configuration_present(name: str, response: dict[str, Any]) -> bool:
